@@ -1,0 +1,1520 @@
+---
+title: "COVID-19"
+author: "Philip Ridgill"
+date: "01/08/2020"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+    highlight: kate
+    theme: lumen
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(directlabels)
+library(scales)
+library(zoo)
+library(spData)
+library(tmap)
+library(shinyjs)
+library(purrr)
+library(plotly)
+library(treemap)
+#library(d3treeR)
+library(treemapify)
+library(tidyverse)
+
+setwd("C:/Users/phili/OneDrive/R/Covid")
+covid <- read.csv("full_data_07_31.csv")
+locations <- read.csv("locations.csv")
+missing_locations <- read.csv("missing_locations2.csv")
+dates <- read.csv("dates.csv")
+
+date_today <- "31/07/2020"
+date_7_days <- "25/07/2020"
+date_tests <- "30/07/2020" # use 3 days old
+Asia <- 200
+Europe <- 170
+North_America <- 170
+South_America <- 160
+Africa <- 160
+Oceania <- 170
+
+####ECDC
+#these libraries need to be loaded
+library(utils)
+
+#read the Dataset sheet into “R”. The dataset will be called "data".
+#ecdc <- read.csv("https://opendata.ecdc.europa.eu/covid19/casedistribution/csv", na.strings = "", fileEncoding = "UTF-8-BOM", colClasses=c('factor','numeric','numeric','numeric','numeric','numeric','factor','factor','factor','numeric'))
+
+
+locations <- locations[!duplicated(locations$location), ]
+locations <- locations %>%
+  select(1:3)
+
+covid <- covid %>%
+  filter(location != "World" & location != "International") %>%
+  mutate(new_cases = as.numeric(new_cases),
+         new_deaths = as.numeric(new_deaths),
+         total_cases = as.numeric(total_cases),
+         total_deaths = as.numeric(total_deaths),
+         new_tests = as.numeric(new_tests),
+         total_tests = as.numeric(total_tests),
+         date = as.Date(date, format = "%d/%m/%Y"),
+         case_fatality = total_deaths/total_cases,
+         growth_rate_cases = new_cases/total_cases,
+         growth_rate_deaths = new_deaths/total_deaths) %>%
+  #left_join(locations, by = "location") %>%
+  mutate(population = as.numeric(population),
+         cases_by_pop = (total_cases/population)*1000000,
+         deaths_by_pop = (total_deaths/population)*1000000,
+         new_cases_by_pop = (new_cases/population)*1000000,
+         new_deaths_by_pop = (new_deaths/population)*1000000,
+         total_deaths_per_million = (total_deaths/population)*1000000) %>%
+  group_by(location) %>%
+         mutate(lag_total_deaths = lag(total_deaths, 1),
+         lag_total_cases = lag(total_cases, 1),
+         new_cases_7 = rollapply(new_cases, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         WoW_new_cases_7 = new_cases_7/lag(new_cases_7,7)-1,
+         WoW_new_deaths_7 = new_deaths_7/lag(new_deaths_7,7)-1,
+         new_deaths_7_pop = new_deaths_7/population*1000000,
+         new_cases_7_pop = new_cases_7/population*1000000) %>%
+  ungroup()
+
+
+
+covid_10 <- covid %>%
+  group_by(location) %>%
+  filter(total_cases >= 10) %>%
+  mutate(days_since_10 = row_number(),
+         days_since_10 = as.numeric(days_since_10)-1)
+
+
+
+covid_50 <- covid %>%
+  group_by(location) %>%
+  filter(total_cases >= 50) %>%
+  mutate(days_since_50 = row_number(),
+         days_since_50 = as.numeric(days_since_50)-1)
+
+covid_100 <- covid %>%
+  group_by(location) %>%
+  filter(total_cases >= 100) %>%
+  mutate(days_since_100 = row_number(),
+         days_since_100 = as.numeric(days_since_100)-1,
+         new_cases_7 = rollapply(new_cases, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"))
+
+covid_100_continent <- covid %>%
+  group_by(date, continent) %>%
+  summarise(new_cases = sum(new_cases, na.rm = TRUE),
+            new_deaths = sum(new_deaths, na.rm = TRUE),
+            total_cases = sum(total_cases, na.rm = TRUE),
+            total_deaths = sum(total_deaths, na.rm = TRUE),
+            case_fatality = total_deaths/total_cases,
+            growth_rate_cases = new_cases/total_cases,
+            growth_rate_deaths = new_deaths/total_deaths) %>%
+  filter(total_cases >= 100) %>%
+  ungroup() %>%
+  group_by(continent) %>%
+  mutate(days_since_100 = row_number(),
+         days_since_100 = as.numeric(days_since_100)-1,
+          new_cases_7 = rollapply(new_cases, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"),
+         WoW_new_cases_7 = new_cases_7/lag(new_cases_7,7)-1,
+         WoW_new_deaths_7 = new_deaths_7/lag(new_deaths_7,7)-1) %>%
+  ungroup()
+  
+
+covid_1000 <- covid %>%
+  group_by(location) %>%
+  filter(total_cases >= 1000) %>%
+  mutate(days_since_1000 = row_number(),
+         days_since_1000 = as.numeric(days_since_1000)-1)
+
+covid_1_deaths <- covid %>%
+  group_by(location) %>%
+  filter(total_deaths >= 1) %>%
+  mutate(days_since_1 = row_number(),
+         days_since_1 = as.numeric(days_since_1)-1)
+
+covid_10_deaths <- covid %>%
+  group_by(location) %>%
+  filter(total_deaths >= 10) %>%
+  mutate(days_since_10 = row_number(),
+         days_since_10 = as.numeric(days_since_10)-1,
+         new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"))
+
+covid_1_per_mil_deaths <- covid %>%
+  group_by(location) %>%
+  filter(total_deaths_per_million >= 1) %>%
+  mutate(days_since_1 = row_number(),
+         days_since_1 = as.numeric(days_since_1)-1,
+         new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"))
+
+covid_1_per_mil_deaths_Italy <- covid_1_per_mil_deaths %>%
+  filter(location == "Italy") %>%
+  rename(location2 = location)
+
+write.csv(covid_10_deaths, "covid_10_deaths.csv", row.names = FALSE)
+
+covid_10_deaths_continent <- covid %>%
+  group_by(date, continent) %>%
+  summarise(new_cases = sum(new_cases, na.rm = TRUE),
+            new_deaths = sum(new_deaths, na.rm = TRUE),
+            total_cases = sum(total_cases, na.rm = TRUE),
+            total_deaths = sum(total_deaths, na.rm = TRUE),
+            case_fatality = total_deaths/total_cases,
+            growth_rate_cases = new_cases/total_cases,
+            growth_rate_deaths = new_deaths/total_deaths) %>%
+  filter(!is.na(continent) == TRUE) %>%
+  ungroup() %>%
+  group_by(continent) %>%
+  filter(total_deaths >= 10) %>%
+  mutate(days_since_10 = row_number(),
+         days_since_10 = as.numeric(days_since_10)-1,
+         new_deaths_7 = rollapply(new_deaths, width=7, FUN=function(x) mean(x, na.rm=TRUE), by=1,  by.column=TRUE, partial=TRUE, fill=NA, align="right"))
+
+covid_10_deaths_Italy <- covid_10_deaths %>%
+  filter(location == "Italy") %>%
+  rename(location2 = location)
+
+covid_10_deaths_China <- covid_10_deaths %>%
+  filter(location == "China") %>%
+  rename(location2 = location)
+
+covid_100_China <- covid_100 %>%
+  filter(location == "China") %>%
+  rename(location2 = location)
+
+
+### mapping
+missing_locations <- missing_locations %>%
+  mutate(date = as.character(date),
+         date = as.Date(date, format = "%d/%m/%Y"),
+         location = as.character(location))
+
+dates <- dates %>%
+  mutate(date = as.character(date),
+         date = as.Date(date, format = "%d/%m/%Y")) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  filter(date <= as.Date(date_today, format = "%d/%m/%Y"))
+
+world <- world
+
+world_map <- world %>%
+  rename(location = name_long) %>%
+  filter(location != "French Southern and Antarctic Lands") %>%
+  mutate(match = "all") %>%
+  left_join(dates, by = c("match")) %>%
+  group_by(location) %>%
+  slice(which(row_number() %% 2 == 1)) %>%
+  ungroup()
+
+world_map$location[world_map$location == "Russian Federation"] <- "Russia"
+world_map$location[world_map$location == "Republic of Korea"] <- "South Korea"
+world_map$location[world_map$location == "Democratic Republic of the Congo"] <- "Democratic Republic of Congo"
+world_map$location[world_map$location == "Republic of the Congo"] <- "Congo"
+world_map$location[world_map$location == "Côte d'Ivoire"] <- "Cote d'Ivoire"
+world_map$location[world_map$location == "Dem. Rep. Korea"] <- "North Korea"
+
+covid_today <- covid %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y"))
+
+covid_map <- covid %>%
+  bind_rows(missing_locations) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  filter(date <= as.Date(date_today, format = "%d/%m/%Y"))
+  
+
+covid_map$location[covid_map$location == "Dem. Rep. Korea"] <- "North Korea"
+
+covid_map_test <- covid_map %>%
+  filter(location == "Dem. Rep. Korea")
+
+world_map_today <- world_map %>%
+  left_join(covid_today, by = c("location", "date")) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(location != "Antarctica")
+
+world_map_all <- world_map %>%
+  left_join(covid_map, by = c("location", "date"))  %>%
+  filter(location != "Antarctica")
+
+pallete_pretty <- c("#E0F3F8", "#FFFFA6", "#FDBE81", "#F68A69", "#DD4234", "#AF0D28", "#780510")
+
+#ideas
+#1) new cases/deaths are larger/smaller or eg 5 categorie. coord flip name of country, fixed size bar
+#2) % new positive tests
+#3) for each continent, countries deaths per million
+#5) new cases/deaths facet plotted against Italy's trendline
+#6) map with % of ATH
+```
+
+# World data
+
+## New cases by continent
+
+```{r, warning = FALSE}
+covid_100_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_cases, fill = continent)) +
+  geom_col(col = "grey") +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(title = "Daily cases", y = "New cases") +
+  theme_light() +
+  theme(axis.title.x = element_blank())
+
+```
+
+### Share
+
+```{r, warning = FALSE}
+covid_100_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_cases, fill = continent)) +
+  geom_col(position = "fill", col = "grey") +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  labs(title = "Share of new cases by continent", y = "Ney deaths (%)")
+
+```
+
+```{r, warning = FALSE}
+covid_100_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_cases, fill = continent)) +
+  geom_col() +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(title = "New cases by continent", y = "New cases") +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  facet_wrap(~ continent)
+
+```
+
+## New deaths by continent
+
+```{r, warning = FALSE}
+covid_10_deaths_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_deaths, fill = continent)) +
+  geom_col(col = "grey") +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  labs(title = "Daily deaths", y = "New deaths")
+
+```
+
+### Share
+
+```{r, warning = FALSE}
+covid_10_deaths_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_deaths, fill = continent)) +
+  geom_col(position = "fill", col = "grey") +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  labs(title = "Share of new deaths by continent", y = "Ney deaths (%)")
+
+```
+
+```{r, warning = FALSE}
+covid_10_deaths_continent %>%
+  filter(date > as.Date("20/02/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_deaths, fill = continent)) +
+  geom_col() +
+  scale_x_date(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  labs(title = "New deaths by continent", y = "New deaths") +
+  facet_wrap(~ continent)
+
+```
+
+# Map
+
+## New cases per million (7 day average): Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_new_cases <- c(0,5, 10,20,30,50,70,100,150,200,300,400, Inf)
+
+pallete_pretty <- c("#E0F3F8", "#FFFFA6", "#FDBE81", "#F68A69", "#DD4234", "#AF0D28", "#780510")
+
+world_new_cases <- tm_shape(world_map_today, projection = "robin") +
+  tm_polygons(col = "new_cases_7_pop", breaks = breaks_new_cases, palette = pallete_pretty, title = "", colorNA = "grey95") +
+  tm_layout(frame = FALSE, title = "") +
+  tm_style("col_blind") +
+  tm_legend(hist.width = 0.25)
+
+
+# "#74ADD1", "#E0F3F8", "#FFFFA6", "#FDBE81", "#F68A69", "#DD4234", "#AF0D28", "#780510"
+
+# "#7030A0",  "#E0F3F8", "#F8FAA3", "#F6B97E", "#EF8566", "#D8544F", "#B02E4E"
+
+#"#604A7B", "#7030A0", "#6600CC", "#5600BB", "#5D64C4", "#89B8D7","#F8FAA3","#F6B97E","#EF8566","#D8544F", "#B02E4E"
+
+tmap_save(world_new_cases, filename = "world_new_cases.jpg", width = 2500, height = 1100)
+
+knitr::include_graphics(path="world_new_cases.jpg")
+```
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_new_cases <- c(0,5, 10,20,30,50,70,100,150,200,300,400, Inf)
+
+world_anim_cases <- tm_shape(world_map_all, projection = "robin") +
+  tm_polygons(col = "new_cases_7_pop", breaks = breaks_new_cases, palette = pallete_pretty, title = "New cases per million (7 day average)", colorNA = "grey95") +
+  tm_layout(frame = FALSE, title = "", title.position = c("center", "top")) +
+  tm_facets(along = "date", free.coords = FALSE) +
+  tm_style("col_blind")
+
+#world_anim_cases
+
+tmap_animation(world_anim_cases, filename = "world_new_cases.gif", width = 1500,
+               height = 660, dpi = 72, delay = 20, loop = TRUE,
+               restart.delay = 200)
+
+
+```
+
+```{r gapgif, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="world_new_cases.gif")
+```
+
+
+## Weekly change in new cases
+
+
+```{r, warning=FALSE, comments=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+world_WoW_new_cases <- tm_shape(world_map_today, projection = "robin") + 
+  tm_polygons(col = "WoW_new_cases_7", breaks = breaks_WoW, palette = "-PiYG", title = "", colorNA = "grey95") + 
+  tm_layout(frame = FALSE, title = "", title.position = c("center", "top")) +
+  tm_style("col_blind")
+
+tmap_save(world_WoW_new_cases, filename = "world_WoW_new_cases.jpg", width = 2500, height = 1100)
+
+knitr::include_graphics(path="world_WoW_new_cases.jpg")
+```
+
+
+
+
+### Day by day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+world_anim_WoW_cases <- tm_shape(world_map_all, projection = "robin") + 
+  tm_polygons(col = "WoW_new_cases_7", breaks = breaks_WoW, palette = "-PiYG", title = "Weekly change in average new cases") + 
+  tm_layout(frame = FALSE, title = "Weekly change in average new cases", title.position = c("center", "top")) +
+  tm_facets(along = "date", free.coords = FALSE) +
+  tm_style("col_blind")
+
+#world_anim_WoW_cases
+
+tmap_animation(world_anim_WoW_cases, filename = "world_WoW_new_cases.gif", width = 1500,
+               height = 660, dpi = 72, delay = 20, loop = TRUE,
+               restart.delay = 200)
+
+
+```
+
+```{r gapgif3, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="world_WoW_new_cases.gif")
+```
+
+## New deaths per million (7 day average): Today
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_new_deaths <- c(0, 0.5, 1, 1.5, 2, 3, 5, 10, 20, 30, Inf)
+
+world_new_deaths <- tm_shape(world_map_today, projection = "robin") +
+  tm_polygons(col = "new_deaths_7_pop", breaks = breaks_new_deaths, palette = pallete_pretty, title = "", colorNA = "grey95") +
+  tm_layout(frame = FALSE, title = "") +
+  tm_style("col_blind")
+
+tmap_save(world_new_deaths, filename = "world_new_deaths.jpg", width = 2500, height = 1100)
+
+knitr::include_graphics(path="world_new_deaths.jpg")
+```
+
+
+
+
+### Day by Day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_new_deaths <- c(0, 0.5, 1, 1.5, 2, 3, 5, 10, 20, 30, Inf)
+
+world_anim_deaths <- tm_shape(world_map_all, projection = "robin") +
+  tm_polygons(col = "new_deaths_7_pop", breaks = breaks_new_deaths, palette = pallete_pretty, title = "New deaths per million (7 day average)", colorNA = "grey95") +
+  tm_layout(frame = FALSE, title = "", title.position = c("center", "top")) +
+  tm_facets(along = "date", free.coords = FALSE) +
+  tm_style("col_blind")
+
+#world_anim_deaths
+
+tmap_animation(world_anim_deaths, filename = "world_new_deaths.gif", width = 1500,
+               height = 660, dpi = 72, delay = 20, loop = TRUE,
+               restart.delay = 200)
+
+
+```
+
+```{r gapgif2, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="world_new_deaths.gif")
+```
+
+## Weekly change in new deaths
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+world_WoW_new_deaths <- tm_shape(world_map_today, projection = "robin") + 
+  tm_polygons(col = "WoW_new_deaths_7", breaks = breaks_WoW, palette = "-PiYG", title = "", colorNA = "grey95") + 
+  tm_layout(frame = FALSE, title = "", title.position = c("center", "top")) +
+  tm_style("col_blind")
+
+tmap_save(world_WoW_new_deaths, filename = "world_WoW_new_deaths.jpg", width = 2500, height = 1100)
+
+knitr::include_graphics(path="world_WoW_new_deaths.jpg")
+```
+
+
+
+
+### Day by day animation
+
+```{r, warning=FALSE, comment=FALSE, message=FALSE}
+breaks_WoW <- c(-1, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 1, 2, Inf)
+
+world_anim_WoW_deaths <- tm_shape(world_map_all, projection = "robin") + 
+  tm_polygons(col = "WoW_new_deaths_7", breaks = breaks_WoW, palette = "-PiYG", title = "Weekly change in average new deaths") + 
+  tm_layout(frame = FALSE, title = "", title.position = c("center", "top")) +
+  tm_facets(along = "date", free.coords = FALSE) +
+  tm_style("col_blind")
+
+#world_anim_WoW_deaths
+
+tmap_animation(world_anim_WoW_deaths, filename = "world_WoW_new_deaths.gif", width = 1500,
+               height = 660, dpi = 72, delay = 20, loop = TRUE,
+               restart.delay = 200)
+
+
+```
+
+```{r gapgif4, fig.show='animate', ffmpeg.format='gif', dev='jpeg'}
+knitr::include_graphics(path="world_WoW_new_deaths.gif")
+```
+
+# Treemap
+
+## Cumulative
+
+```{r, warning = FALSE}
+
+treemap(covid %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")),
+            index=c("continent","location"),
+            vSize="total_cases",
+            type="index",
+            palette = "Set2",
+            bg.labels=c("grey"),
+            align.labels=list(c("center", "center"), 
+                              c("right", "center")),
+            title = "total cases by continent and country"
+          )            
+
+```
+
+```{r, warning = FALSE}
+
+treemap(covid %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")),
+            index=c("continent","location"),
+            vSize="total_deaths",
+            type="index",
+            palette = "Set2",
+            bg.labels=c("grey"),
+            align.labels=list(c("center", "center"), 
+                              c("right", "center")),
+            title = "total deaths by continent and country"
+          )            
+
+```
+
+## Last Week
+
+```{r, warning = FALSE}
+
+treemap(covid %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")),
+            index=c("continent","location"),
+            vSize="new_cases_7",
+            type="index",
+            palette = "Set2",
+            bg.labels=c("grey"),
+            align.labels=list(c("center", "center"), 
+                              c("right", "center")),
+            title = "New cases by continent and country"
+          )            
+
+```
+
+```{r, warning = FALSE}
+
+treemap(covid %>% filter(date == as.Date(date_today, format = "%d/%m/%Y")),
+            index=c("continent","location"),
+            vSize="new_deaths_7",
+            type="index",
+            palette = "Set2",
+            bg.labels=c("grey"),
+            align.labels=list(c("center", "center"), 
+                              c("right", "center")),
+            title = "New deaths by continent and country"
+          )            
+
+```
+
+
+
+# Change in 7 day rolling average
+
+## Cases
+
+```{r, warning=FALSE}
+
+covid %>%
+  filter(location != "World") %>%
+  filter(new_cases_7 > 200) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_cases_7_pop)) %>%
+  ggplot(aes(x = location, y = WoW_new_cases_7, fill = continent)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "New Cases growth", subtitle = "ordered by 7 day rolling average of new cases (> 200) per million ", y = "Week on Week change of average new cases") 
+```
+
+```{r, warning=FALSE}
+
+covid %>%
+  filter(location != "World") %>%
+  filter(new_cases_7 > 100) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_cases_7_pop)) %>%
+  ggplot(aes(x = new_cases_7_pop, y = WoW_new_cases_7, col = continent, label = location)) + 
+  geom_point() +
+  geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_log10(expand = c(0.05,0.05)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "New Cases growth", subtitle = "only showing countries with (> 100) new cases", y = "Week on Week change of average new cases", x = "New cases per million (log - 7 day rolling average)") 
+```
+
+```{r, warning=FALSE}
+
+covid %>%
+  filter(location != "World" & is.na(continent) == FALSE) %>%
+  filter(new_cases_7 > 10) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_cases_7_pop)) %>%
+  ggplot(aes(x = new_cases_7_pop, y = WoW_new_cases_7, col = continent, label = location)) + 
+  geom_density2d(alpha = 0.3) +
+  geom_point(aes(size = population)) +
+  #geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_log10(expand = c(0.05,0.05)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~ continent) +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "New Cases growth by continent", subtitle = "only showing countries with (> 10) new cases", y = "Week on Week change of average new cases", x = "New cases per million (log - 7 day rolling average)", size = "population") 
+```
+
+## Deaths
+
+```{r, warning=FALSE}
+
+covid %>%
+  filter(location != "World") %>%
+  filter(new_deaths_7 > 5) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_deaths_7_pop)) %>%
+  ggplot(aes(x = location, y = WoW_new_deaths_7, fill = continent)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "New deaths growth", subtitle = "ordered by 7 day rolling average of new deaths (> 5) per million", y = "Week on Week change of average new deaths") 
+```
+
+```{r, warning=FALSE}
+#ggplotly(
+covid %>%
+  filter(location != "World") %>%
+  filter(new_deaths_7 > 3) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_deaths_7_pop)) %>%
+  ggplot(aes(x = new_deaths_7_pop, y = WoW_new_deaths_7, col = continent, label = location)) + 
+  geom_point() +
+  geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_log10() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "New deaths growth", subtitle = "only showing countries with (> 3) new deaths", y = "Week on Week change of average new deaths", x = "New deaths per million (log - 7 day rolling average)") 
+#)
+```
+
+```{r, warning=FALSE}
+#ggplotly(
+covid %>%
+  filter(location != "World" & is.na(continent) == FALSE) %>%
+  filter(new_deaths_7 > 1) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_deaths_7_pop)) %>%
+  ggplot(aes(x = new_deaths_7_pop, y = WoW_new_deaths_7, col = continent, label = location)) + 
+  geom_point(aes(size = population)) +
+  geom_density2d(alpha = 0.3) +
+  #geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  scale_y_continuous(expand = c(0,0), labels = percent_format(), breaks = seq(-1,3,0.5), limits = c(-1, 2)) +
+  scale_x_log10() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~ continent) +
+  theme_light() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(title = "New deaths growth by continent", subtitle = "only showing countries with (> 1) new deaths", y = "Week on Week change of average new deaths", x = "New deaths per million (log - 7 day rolling average)", size = "population") 
+#)
+```
+
+# Top 20 countries 
+
+## By new cases
+
+```{r, warning=FALSE}
+covid_100_n_20_3 <- covid_100 %>% filter(date == as.Date(date_today, format = "%d/%m/%Y"))
+
+top_20_cases <- sort(covid_100_n_20_3$new_cases_7, TRUE)[21]
+
+covid_100_n_20_2 <- covid_100_n_20_3 %>% filter(new_cases_7 > top_20_cases) %>%
+  mutate(top_20 = 1)
+
+covid_100_n_20 <- covid_100_n_20_2 %>% select(location, top_20)
+
+
+covid_100 %>%
+  ungroup() %>%
+  left_join(covid_100_n_20, by = "location") %>%
+  filter(top_20 == 1) %>%
+  filter(date >= as.Date(date_tests, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_cases_7)) %>%
+  ggplot(aes(x = location, y = new_cases_7, fill = continent, group = date)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Average New Cases in last 3 days", subtitle = "top 20 based on 7 day rolling average", y = "New cases") 
+```
+
+## By new deaths
+
+```{r, warning=FALSE}
+covid_10_deaths_n_20_3 <- covid_10_deaths %>% filter(date == as.Date(date_today, format = "%d/%m/%Y"))
+
+top_20_deaths <- sort(covid_10_deaths_n_20_3$new_deaths_7, TRUE)[21]
+
+covid_10_deaths_n_20_2 <- covid_10_deaths_n_20_3 %>% filter(new_deaths_7 > top_20_deaths) %>%
+  mutate(top_20 = 1)
+
+covid_10_deaths_n_20 <- covid_10_deaths_n_20_2 %>% select(location, top_20)
+
+
+covid_10_deaths %>%
+  ungroup() %>%
+  left_join(covid_10_deaths_n_20, by = "location") %>%
+  filter(top_20 == 1) %>%
+  filter(date >= as.Date(date_tests, format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, -new_deaths_7)) %>%
+  ggplot(aes(x = location, y = new_deaths_7, fill = continent, group = date)) + 
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light()+
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Average New Deaths in last 3 days", subtitle = "top 20 based on 7 day rolling average", y = "New deaths") 
+```
+
+# New cases heatmap by day and country
+
+The colour scales are different for each chart (continent)
+
+## Countries with most cases
+
+```{r, warning=FALSE}
+covid_over_50k <- covid %>%
+  filter(date >= as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(total_cases > 30000) %>%
+  distinct(location) %>%
+  mutate(include = TRUE)
+
+
+ray_50k <- covid %>%
+  left_join(covid_over_50k, by = c("location")) %>%
+  filter(location != "Ecuador") %>% # remove, just temporary
+  filter(include == TRUE) %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 1) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 5) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million") 
+
+ggsave(ray_50k, filename = "ray_50k.jpg", width = 8, height = 9)
+
+knitr::include_graphics(path="ray_50k.jpg")
+```
+
+## Asia
+
+```{r, warning=FALSE}
+
+ray_asia <- covid %>%
+  filter(continent == "Asia") %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 10) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 6) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million")
+
+ggsave(ray_asia, filename = "ray_asia.jpg", width = 8, height = 9)
+
+knitr::include_graphics(path="ray_asia.jpg")
+```
+
+## Europe
+
+```{r, warning=FALSE}
+
+ray_europe <- covid %>%
+  filter(continent == "Europe") %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 1) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 6) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million") 
+
+ggsave(ray_europe, filename = "ray_europe.jpg", width = 8, height = 9)
+
+knitr::include_graphics(path="ray_europe.jpg")
+```
+
+## North America
+
+```{r, warning=FALSE}
+
+ray_NA <- covid %>%
+  filter(continent == "North America") %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 1) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 8) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million") 
+
+ggsave(ray_NA, filename = "ray_NA.jpg", width = 8, height = 5)
+
+knitr::include_graphics(path="ray_NA.jpg")
+```
+
+## South America
+
+```{r, warning=FALSE}
+
+ray_SA <- covid %>%
+  filter(continent == "South America") %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 1) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 8) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million") 
+
+ggsave(ray_SA, filename = "ray_SA.jpg", width = 8, height = 5)
+
+knitr::include_graphics(path="ray_SA.jpg")
+```
+
+
+## Africa
+
+```{r, warning=FALSE}
+
+ray_africa <- covid %>%
+  filter(continent == "Africa") %>%
+  filter(population > 5000000) %>%
+  filter(total_cases > 1) %>%
+  filter(date >= as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  mutate(location = fct_reorder(location, total_cases)) %>%
+  ggplot(aes(y = location, x = date, col = new_cases_7_pop)) + 
+  geom_point(shape = 15, size = 4) +
+  # scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4", "#5600BB", "#6600CC" ,"#7030A0","#604A7B"),
+  #                        values = c(1.0, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1, 0.05, 0.025, 0.01, 0)) +
+  scale_colour_gradientn(colours = c("#B02E4E", "#D8544F", "#EF8566", "#F6B97E", "#F8FAA3", "#89B8D7", "#5D64C4"),
+                         values = c(1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0)) +
+  theme_light() +
+  theme(axis.title = element_blank()) +
+  labs(title = "New Cases per million", col = "new cases per million") 
+
+ggsave(ray_africa, filename = "ray_africa.jpg", width = 8, height = 7)
+
+knitr::include_graphics(path="ray_africa.jpg")
+```
+
+# New cases by continent
+
+```{r, warning=FALSE}
+covid_100_continent %>%
+  ggplot(aes(x = date, y = new_cases_7, group = continent)) +
+  geom_line(aes(col = continent), size = 0.75) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  scale_x_date(expand = c(0.2,0)) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases (log)", title = "New cases by continent", subtitle = "7 day rolling average") +
+  theme_light()
+```
+
+## Asia
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Asia") %>%
+  filter(date > as.Date("28/02/2020", format = "%d/%m/%Y")) %>%
+  filter(population > 20000000) %>%
+ filter(new_cases_7_pop > 1) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million (log)", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## Europe
+
+```{r, warning=FALSE}
+ggplotly(
+covid %>%
+  filter(continent == "Europe") %>%
+  filter(population > 7000000) %>%
+  filter(new_cases_7_pop > 1) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million (log)", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## North America
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "North America") %>%
+  filter(population > 2000000) %>%
+  filter(new_cases_7_pop > 1) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million (log)", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## South America
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "South America") %>%
+  filter(population > 1500000) %>%
+  filter(new_cases_7_pop > 1) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million (log)", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## Africa
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Africa") %>%
+  filter(population > 20000000) %>%
+  filter(new_cases_7_pop > 1) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million (log)", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## Oceania
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Oceania") %>%
+  filter(population > 500000) %>%
+  ggplot(aes(x = date, y = round(new_cases_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases", y = "New cases per million", title = "New cases 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+
+# New deaths by continent
+
+```{r, warning=FALSE}
+covid_10_deaths_continent %>%
+  ggplot(aes(x = date, y = new_deaths_7, group = continent)) +
+  geom_line(aes(col = continent), size = 0.75) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x)),
+                expand = c(0,0)) +
+  scale_x_date(expand = c(0.2,0)) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 10 deaths", y = "New deaths (log)", title = "New deaths by continent", subtitle = "7 day rolling average") +
+  theme_light() +
+  theme(axis.title.x = element_blank())
+```
+
+## Asia
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Asia") %>%
+  filter(population > 20000000) %>%
+  filter(new_deaths_7_pop > 0.1) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million (log)", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+```
+
+## Europe
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Europe") %>%
+  filter(population > 7000000) %>%
+  filter(new_deaths_7_pop > 0.1) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million (log)", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+
+```
+
+## North America
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "North America") %>%
+  filter(population > 2000000) %>%
+  filter(new_deaths_7_pop > 0.1) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million (log)", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+
+```
+
+## South America
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "South America") %>%
+  filter(population > 2000000) %>%
+  filter(new_deaths_7_pop > 0.1) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million (log)", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+
+```
+
+## Africa
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Africa") %>%
+  filter(population > 10000000) %>%
+  filter(new_deaths_7_pop > 0.1) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_y_log10() +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million (log)", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+
+```
+
+## Oceania
+
+```{r, warning=FALSE}
+ggplotly(
+  covid %>%
+  filter(continent == "Oceania") %>%
+  filter(population > 500000) %>%
+  ggplot(aes(x = date, y = round(new_deaths_7_pop, 2))) +
+  geom_line(aes(col = location), size = 0.5) +
+  scale_x_date(limits = c(as.Date(c('28/02/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(y = "New deaths per million", title = "New deaths 7 day rolling average") +
+  theme_light() +
+  theme(legend.position = "none",
+        axis.title.x = element_blank()) 
+)
+
+```
+
+
+# Cumalative Cases 
+
+## by continent
+
+```{r, warning=FALSE}
+covid_100_continent %>%
+  ggplot(aes(x = days_since_100, y = total_cases)) +
+  geom_line(aes(col = continent), size = 1) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x))) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 100 cases reported", y = "Total confirmed cases (log)", title = "Number of confirmed cases since first 100 reported") +
+  theme_light()
+
+```
+
+## Growth rate
+
+```{r, warning=FALSE}
+ggplotly(
+covid_100_continent %>%
+  ggplot(aes(x = date, y = round(WoW_new_cases_7*100,3))) +
+  geom_line(aes(col = continent), size = 0.7) +
+  scale_x_date(limits = c(as.Date(c('01/04/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  scale_y_continuous(limits = c(-100, 300)) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed", size = 0.3) +
+  labs(x = "Days since first 100 cases reported", y = "Week on Week change in new cases (%)", title = "Growth rate of cases (7 day rolling average)") +
+  theme_light() +
+  theme(axis.title.x = element_blank())
+)
+```
+
+# Cumulative Deaths 
+
+## by continent
+
+```{r, warning=FALSE}
+covid_10_deaths_continent %>%
+  ggplot(aes(x = days_since_10, y = total_deaths)) +
+  geom_line(aes(col = continent), size = 1) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x))) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 10 deaths", y = "Total deaths (log)", title = "Number of deaths since first 10 deaths reported") +
+  theme_light()
+
+```
+
+## Growth rate
+
+```{r, warning=FALSE}
+ggplotly(
+covid_100_continent %>%
+  filter(continent != "Oceania") %>%
+  ggplot(aes(x = date, y = round(WoW_new_deaths_7*100,3))) +
+  geom_line(aes(col = continent), size = 0.7) +
+  scale_x_date(limits = c(as.Date(c('01/04/2020', date_today), format="%d/%m/%Y")), expand = c(0,3)) +
+  scale_y_continuous(limits = c(-100, 300)) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  geom_hline(yintercept = 0, col = "black", linetype = "dashed", size = 0.3) +
+  labs(x = "Days since first 100 cases reported", y = "Week on Week change in new deaths (%)", title = "Growth rate of deaths (7 day rolling average)") +
+  theme_light() +
+  theme(axis.title.x = element_blank())
+)
+```
+
+## Deaths per million plotted against Italy's trendline
+
+```{r, warning = FALSE}
+covid_1_per_mil_deaths %>%
+  filter(location == "Czech Republic" | location == "United Kingdom" | location == "United States" | location == "Germany" | location == "China" | location == "Netherlands" | location == "Belgium" | location == "South Korea" | location == "France" | location == "Japan" | location == "Germany" | location == "Switzerland" | location == "Spain"  | location == "Chile" | location == "Iran" | location == "Sweden" | location == "Brazil" | location == "Russia" | location == "Mexico" | location == "Turkey" | location == "Peru") %>%
+  ggplot(aes(x = days_since_1, y = total_deaths_per_million)) +
+  geom_line(aes(col = location), size = 1) +
+  # scale_y_log10() +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 1 death per million", y = "Deaths per million", title = "Deaths per million since first 1 death per million", subtitle = "Plotted against Italy's trendline") +
+  facet_wrap(~ location) +
+  geom_line(data = covid_1_per_mil_deaths_Italy, colour = "grey") +
+  theme_light() +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank())
+```
+
+
+# Cases and deaths
+
+## Scatter plot
+
+```{r, warning=FALSE}
+median_case_fatality <- covid %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(location != "World" & location != "International") %>%
+  filter(total_cases > 1000 & total_deaths > 40) %>%
+  select(case_fatality) %>%
+  mutate(case_fatality = median(case_fatality, na.rm = TRUE))
+
+median_case_fatality <- median_case_fatality[1, 1]
+  
+ggplotly(
+covid %>%
+  filter(location != "World" & location != "International") %>%
+  filter(total_cases > 1000 & total_deaths > 50) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(case_fatality = total_deaths/total_cases) %>%
+  ggplot(aes(x = total_cases, y = total_deaths)) + 
+  geom_point(aes(colour = case_fatality, label = location)) +
+  scale_colour_gradient2(midpoint=median_case_fatality$case_fatality, low="green", high="red") +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x))) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x))) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", size = 0.5) +
+  geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  theme_dark() +
+  labs(title = "Deaths and Cases", subtitle = "countries with at least 1000 cases and 50 deaths", x = "Total cases (log)", y = "Total deaths (log)")
+)
+```
+
+## Case Fatality rates
+
+```{r}
+covid %>%
+  filter(location != "World" & location != "International") %>%
+  filter(total_cases > 3000 & total_deaths > 300) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  mutate(case_fatality = total_deaths/total_cases,
+         location = fct_reorder(location, -case_fatality)) %>%
+  ggplot(aes(x = location, y = case_fatality, fill = continent)) + 
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Case Fatality rates of countries with at least 3000 cases and 300 deaths", y = "Case Fatality rates") 
+```
+
+
+```{r, warning = FALSE}
+ggplotly(
+covid %>%
+  filter(total_cases > 1000 & total_deaths > 50) %>%
+  filter(date == as.Date(date_tests, format = "%d/%m/%Y")) %>%
+  mutate(case_fatality = total_deaths/total_cases) %>%
+  ggplot(aes(x = total_cases/total_tests, y = case_fatality)) + 
+  geom_point(aes(colour = case_fatality, label = location)) +
+  scale_colour_gradient2(midpoint=median_case_fatality$case_fatality, low="green", high="red") +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", size = 0.5) +
+  geom_text(aes(label = location), size = 2, hjust= -0.2) +
+  theme_dark() +
+  labs(title = "CFR by % of positive tests", subtitle = "countries with at least 1000 cases and 50 deaths", x = "% of positive tests", y = "Case Fatality Ratio")
+)
+```
+
+## Tests per thousand
+
+Some missing test data
+
+```{r, warning=FALSE}
+covid %>%
+  filter(location != "World" & location != "International") %>%
+  filter(total_cases > 1000 & total_deaths > 40 & total_tests_per_thousand > 1) %>%
+  filter(date == as.Date(date_tests, format = "%d/%m/%Y")) %>%
+  mutate(case_fatality = total_deaths/total_cases,
+         location = fct_reorder(location, -total_tests_per_thousand)) %>%
+  ggplot(aes(x = location, y = total_tests_per_thousand, fill = continent)) + 
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Tests per thousand", subtitle = "countries with available data", y = "Tests per thousand") 
+```
+
+```{r, warning = FALSE}
+covid %>%
+  filter(total_deaths > 10) %>%
+  filter(location == "Czech Republic" | location == "Italy" | location == "United Kingdom" | location == "United States" | location == "Germany" | location == "China" | location == "Netherlands" | location == "Belgium" | location == "South Korea" | location == "France" | location == "Japan" | location == "Germany" | location == "Switzerland" | location == "Spain" | location == "Norway" | location == "Austria" | location == "Australia"| location == "Brazil" | location == "Russia" | location == "Mexico") %>%
+  ggplot(aes(x = date, y = case_fatality)) +
+  geom_line(aes(col = location), size = 1) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_x_date(expand = c(0,20)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Date", y = "Case Fatality rate", title = "Case Fatality rate since first 10 deaths") +
+  theme_light() +
+  theme(legend.position = "none")
+
+```
+
+```{r, warning = FALSE}
+covid_100_continent %>%
+  mutate(total_deaths/total_cases) %>%
+  ggplot(aes(x = date, y = case_fatality)) +
+  geom_line(aes(col = continent), size = 1) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_x_date(expand = c(0,20)) +
+  geom_dl(aes(label = continent), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Date", y = "Case Fatality rate", title = "Case Fatality rate since first 10 deaths") +
+  theme_light()
+
+```
+
+# Legacy - Daily increases 
+
+## New cases
+
+### CZ peer comparison
+
+```{r, warning = FALSE}
+covid %>%
+  filter(location == "Netherlands" | location == "Sweden" | location == "Norway" | location == "Czech Republic" | location == "Belgium" | location == "Austria" | location == "Switzerland" | location == "Poland" | location == "Slovakia") %>%
+  filter(date > as.Date(date_7_days, format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = location, y = new_cases_7, fill = location, group = date)) +
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, size = 7, vjust = 0.5)) +
+  labs(title = "Average new reported cases in last 7 days", y = "")
+
+```
+
+```{r, warning = FALSE}
+covid %>%
+  filter(location == "Netherlands" | location == "Sweden" | location == "Norway" | location == "Czech Republic" | location == "Belgium" | location == "Austria" | location == "Switzerland" | location == "Poland" | location == "Slovakia") %>%
+  filter(date > as.Date(date_7_days, format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = location, y = WoW_new_cases_7, fill = location, group = date)) +
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, size = 7, vjust = 0.5)) +
+  labs(title = "Weekly change in new cases in last 7 days", subtitle = "Percentage of total cases", y = "Change in new reported cases (%)")
+
+```
+
+## New deaths
+
+### most "at risk" countries
+
+```{r, warning = FALSE}
+covid %>%
+  filter(location == "Netherlands" | location == "Italy" | location == "United Kingdom" | location == "United States" | location == "Belgium" | location == "France" | location == "Germany" | location == "Turkey" | location == "Spain" | location == "Brazil") %>%
+  filter(date > as.Date(date_7_days, format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = location, y = new_deaths, fill = location, group = date)) +
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, size = 7, vjust = 0.5)) +
+  labs(title = "New deaths in last 7 days")
+
+```
+
+```{r, warning = FALSE}
+covid %>%
+  filter(location == "Netherlands" | location == "Italy" | location == "United Kingdom" | location == "United States" | location == "Belgium" | location == "France" | location == "Germany" | location == "Turkey" | location == "Spain" | location == "Brazil") %>%
+  filter(date > as.Date(date_7_days, format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = location, y = WoW_new_deaths_7, fill = location, group = date)) +
+  geom_col(position = "dodge", col = "black") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme_light() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, size = 7, vjust = 0.5)) +
+  labs(title = "Weekly change in new deaths in last 7 days", y = "Change in new deaths (%)")
+
+```
+
+#### Share of new deaths
+
+```{r, warning = FALSE}
+covid %>%
+  filter(location == "Netherlands" | location == "Italy" | location == "United Kingdom" | location == "United States" | location == "Belgium" | location == "France" | location == "Germany" | location == "Turkey" | location == "Spain" | location == "Brazil") %>%
+  filter(date > as.Date("01/03/2020", format = "%d/%m/%Y")) %>%
+  ggplot(aes(x = date, y = new_deaths, fill = location)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(expand = c(0,0), labels = percent_format()) +
+  theme(axis.title.x = element_blank()) +
+  labs()
+
+```
+
+# Legacy - Deaths per million people
+
+```{r}
+covid %>%
+  filter(location != "World" & location != "International") %>%
+  filter(total_cases > 1000 & total_deaths > 100) %>%
+  filter(date == as.Date(date_today, format = "%d/%m/%Y")) %>%
+  filter(total_deaths_per_million > 2) %>%
+  mutate(location = fct_reorder(location, -total_deaths_per_million)) %>%
+  ggplot(aes(x = location, y = total_deaths_per_million, fill = continent)) + 
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_light() +
+  theme(axis.title.x = element_blank(), panel.grid.minor = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5)) +
+  labs(title = "Deaths per 1 million", subtitle = "countries with at least 1000 cases and 100 deaths", y = "Deaths per 1 million") 
+```
+
+```{r, warning = FALSE}
+covid_10_deaths %>%
+  filter(location == "Czech Republic" | location == "Sweden" | location == "Italy" | location == "United Kingdom" | location == "United States" | location == "Germany" | location == "Netherlands" | location == "Belgium" | location == "South Korea" | location == "France" | location == "Japan" | location == "Germany" | location == "Switzerland" | location == "Spain" | location == "Norway" | location == "Austria" | location == "Iran" | location == "Australia") %>%
+  ggplot(aes(x = days_since_10, y = deaths_by_pop)) +
+  geom_line(aes(col = location), size = 1) +
+  #scale_y_log10() +
+  scale_x_continuous(limits = c(0,Europe)) +
+  geom_dl(aes(label = location), method = list(dl.combine("last.points"), cex = 0.6)) +
+  labs(x = "Days since first 10 deaths", y = "Deaths per 1 million", title = "Deaths per 1 million inhabitants")  +
+  geom_line(data = covid_10_deaths_China, colour = "grey") +
+  theme_light()
+
+```
