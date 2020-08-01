@@ -1,0 +1,183 @@
+---
+title: "Covid-19 Excess Deaths"
+author: "Philip Ridgill"
+date: "02/06/2020"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: hide
+    highlight: kate
+    theme: lumen
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(directlabels)
+library(scales)
+library(zoo)
+library(spData)
+library(tmap)
+library(shinyjs)
+library(purrr)
+library(plotly)
+library(treemap)
+#library(d3treeR)
+library(treemapify)
+library(tidyverse)
+
+setwd("C:/Users/phili/OneDrive/R/Covid")
+ft_ed <- read.csv("ft_excess_deaths.txt")
+eurostat_ed <- read.csv("eurostat_ed_2.csv")
+eurostat_ed_CZ <- read.csv("eurostat_ed_3.csv")
+
+
+#### FT
+
+ft_ed_country <- ft_ed %>%
+  mutate(country = as.character(country),
+         region = as.character(region)) %>%
+  filter(country == region) %>%
+  filter(year > 2014)
+
+ft_ed_country_2020 <- ft_ed_country %>%
+  filter(year == 2020)
+
+#### END FT
+
+#### eurostat data # not really useful
+
+eurostat_ed$Value[eurostat_ed$Value == ":"] <- NA
+
+eed_all <- eurostat_ed %>%
+  mutate(TIME = as.character(TIME),
+         Value = as.character(Value),
+         Value = sub(x = Value, pattern = ",", replacement = ""),
+         Value = as.numeric(Value),
+         Year = substr(TIME, 1, 4),
+         Week = substr(TIME, 6, 7),
+         Year = as.integer(Year),
+         Week = as.integer(Week)) %>%
+  select(GEO, Year, Week, Value) %>%
+  rename(Country = GEO,
+         deaths = Value)
+
+eed_expected <- eed_all %>%
+  filter(Year > 2014 & Year < 2020) %>%
+  group_by(Country, Week) %>%
+  mutate(expected_deaths = median(deaths)) %>%
+  filter(Year == 2019) %>%
+  select(1, 3, 5) 
+  
+eed <- eed_all %>%
+  filter(Year > 2014) %>%
+  left_join(eed_expected, by = c("Country", "Week")) %>%
+  mutate(excess_deaths = deaths - expected_deaths)
+
+eed_2020 <- eed %>%
+  filter(Year == 2020)
+
+## CZ
+
+eed_CZ <- eurostat_ed_CZ %>%
+  mutate(TIME = as.character(TIME),
+         Value = as.character(Value),
+         Value = sub(x = Value, pattern = ",", replacement = ""),
+         Value = as.numeric(Value),
+         Year = substr(TIME, 1, 4),
+         Week = substr(TIME, 6, 7),
+         Year = as.integer(Year),
+         Week = as.integer(Week)) %>%
+  select(GEO, GEO_LABEL, Year, Week, Value) %>%
+  rename(Region = GEO_LABEL,
+         deaths = Value) %>%
+  filter(substr(GEO, 1, 2) == "CZ")
+
+eed_expected_CZ <- eed_CZ %>%
+  filter(Year > 2014 & Year < 2020) %>%
+  group_by(Region, Week) %>%
+  mutate(expected_deaths = median(deaths)) %>%
+  filter(Year == 2019) %>%
+  select(2, 4, 6) 
+  
+eed_CZ <- eed_CZ %>%
+  filter(Year > 2014) %>%
+  left_join(eed_expected_CZ, by = c("Region", "Week")) %>%
+  mutate(excess_deaths = deaths - expected_deaths)
+
+eed_CZ_2020 <- eed_CZ %>%
+  filter(Year == 2020)
+
+#### end eurostat
+
+
+
+```
+
+# Eurostat
+
+## CZ
+
+```{r, warning = FALSE}
+
+CZ <- eed_CZ %>%
+  ggplot(aes(x = Week, y = deaths, group = Year)) +
+  geom_line(col = "grey80") +
+  geom_line(aes(y = expected_deaths), col = "black", size = 1) +
+  geom_line(data = eed_CZ_2020, col = "red", size = 1) +
+  scale_x_continuous(expand = c(0,0), limits = c(1,52), breaks = seq(0, 52, 4)) +
+  labs(title = "Deaths by week", y = "Weekly deaths") +
+  facet_wrap(~ Region, scales = "free", ncol = 3) +
+  theme_light() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank())
+  
+ggsave("excess_deaths_CZ.png", CZ, width = 12, height = 20)
+
+knitr::include_graphics(path="excess_deaths_CZ.png")
+
+#ggsave(facet, height = 2400, width = 600 )
+```
+
+## All
+
+```{r, warning = FALSE}
+
+eurostat <- eed %>%
+  ggplot(aes(x = Week, y = deaths, group = Year)) +
+  geom_line(col = "grey80") +
+  geom_line(aes(y = expected_deaths), col = "black", size = 1) +
+  geom_line(data = eed_2020, col = "red", size = 1) +
+  scale_x_continuous(expand = c(0,0), limits = c(1,52), breaks = seq(0, 52, 4)) +
+  labs(title = "Deaths by week", y = "Weekly deaths") +
+  facet_wrap(~ Country, scales = "free", ncol = 3) +
+  theme_light() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank())
+  
+ggsave("excess_deaths_eurostat.png", eurostat, width = 12, height = 40)
+
+knitr::include_graphics(path="excess_deaths_eurostat.png")
+
+```
+
+# FT
+
+## Countries
+
+```{r, warning = FALSE}
+
+ft <- ft_ed_country %>%
+  ggplot(aes(x = week, y = deaths, group = year)) +
+  geom_line(col = "grey80") +
+  geom_line(aes(y = expected_deaths), col = "black", size = 1) +
+  geom_line(data = ft_ed_country_2020, col = "red", size = 1) +
+  scale_x_continuous(expand = c(0,0), limits = c(1,52), breaks = seq(0, 52, 4)) +
+  labs(title = "Deaths by week", y = "Weekly deaths") +
+  facet_wrap(~ country, scales = "free", ncol = 3) +
+  theme_light() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank())
+  
+ggsave("excess_deaths_ft.png", ft, width = 12, height = 40)
+
+knitr::include_graphics(path="excess_deaths_ft.png")
+
+```
